@@ -1,15 +1,20 @@
-﻿using System.IO;
-using System.Threading.Tasks;
+﻿using System.Threading.Tasks;
 using System.Windows;
+using MyToolkit.Mvvm;
+using NSwag.CodeGeneration.SwaggerGenerators.WebApi;
+using NSwag.Commands;
+using NSwagStudio.ViewModels;
 using NSwagStudio.ViewModels.SwaggerGenerators;
 
 namespace NSwagStudio.Views.SwaggerGenerators
 {
     public partial class WebApiSwaggerGeneratorView : ISwaggerGenerator
     {
-        public WebApiSwaggerGeneratorView()
+        public WebApiSwaggerGeneratorView(WebApiToSwaggerCommand command)
         {
             InitializeComponent();
+            ViewModelHelper.RegisterViewModel(Model, this);
+            Model.Command = command; 
         }
 
         private WebApiSwaggerGeneratorViewModel Model { get { return (WebApiSwaggerGeneratorViewModel)Resources["ViewModel"]; } }

@@ -1,3 +1,11 @@
+//-----------------------------------------------------------------------
+// <copyright file="ClientGeneratorBase.cs" company="NSwag">
+//     Copyright (c) Rico Suter. All rights reserved.
+// </copyright>
+// <license>https://github.com/NSwag/NSwag/blob/master/LICENSE.md</license>
+// <author>Rico Suter, mail@rsuter.com</author>
+//-----------------------------------------------------------------------
+
 using System.Collections.Generic;
 using System.Linq;
 using NJsonSchema;
@@ -9,8 +17,7 @@ namespace NSwag.CodeGeneration.ClientGenerators
     /// <summary>The client generator base.</summary>
     public abstract class ClientGeneratorBase : GeneratorBase
     {
-        /// <summary>Gets or sets a value indicating whether [generate multiple web API clients].</summary>
-        public OperationGenerationMode OperationGenerationMode { get; set; }
+        internal abstract ClientGeneratorBaseSettings BaseSettings { get; }
 
         internal abstract string RenderFile(string clientCode);
 
@@ -26,18 +33,18 @@ namespace NSwag.CodeGeneration.ClientGenerators
         {
             var response = GetOkResponse(operation);
             if (response != null)
-                return response.Description;
+                return RemoveLineBreaks(response.Description);
 
             return null;
         }
-        
+
         internal string GenerateFile<TGenerator>(SwaggerService service, TypeResolverBase<TGenerator> resolver)
             where TGenerator : TypeGeneratorBase
         {
             var operations = GetOperations(service, resolver);
             var clients = string.Empty;
 
-            if (OperationGenerationMode == OperationGenerationMode.MultipleClientsFromPathSegments)
+            if (BaseSettings.OperationGenerationMode == OperationGenerationMode.MultipleClientsFromPathSegments)
             {
                 foreach (var controllerOperations in operations.GroupBy(o => o.MvcControllerName))
                     clients += RenderClientCode(controllerOperations.Key, controllerOperations);
@@ -50,8 +57,8 @@ namespace NSwag.CodeGeneration.ClientGenerators
                 .Replace("\n\n\n\n", "\n\n")
                 .Replace("\n\n\n", "\n\n");
         }
-        
-        internal List<OperationModel> GetOperations<TGenerator>(SwaggerService service, TypeResolverBase<TGenerator> resolver) 
+
+        internal List<OperationModel> GetOperations<TGenerator>(SwaggerService service, TypeResolverBase<TGenerator> resolver)
             where TGenerator : TypeGeneratorBase
         {
             service.GenerateOperationIds();
@@ -69,7 +76,7 @@ namespace NSwag.CodeGeneration.ClientGenerators
                     var responses = operation.Responses.Select(r => new ResponseModel
                     {
                         StatusCode = r.Key,
-                        IsSuccess = r.Key == "200",
+                        IsSuccess = HttpUtilities.IsSuccessStatusCode(r.Key),
                         Type = GetType(r.Value.Schema, "Response"),
                         TypeIsDate = GetType(r.Value.Schema, "Response") == "Date"
                     }).ToList();
@@ -82,24 +89,24 @@ namespace NSwag.CodeGeneration.ClientGenerators
                     {
                         Id = operation.OperationId,
 
-                        Path = tuple.Path, 
+                        Path = tuple.Path,
 
                         HttpMethodUpper = ConvertToUpperStartIdentifier(tuple.HttpMethod.ToString()),
                         HttpMethodLower = ConvertToLowerStartIdentifier(tuple.HttpMethod.ToString()),
 
                         IsGetOrDelete = tuple.HttpMethod == SwaggerOperationMethod.Get || tuple.HttpMethod == SwaggerOperationMethod.Delete,
 
-                        Summary = operation.Summary, 
+                        Summary = RemoveLineBreaks(operation.Summary),
 
                         MvcActionName = mvcActionName,
                         MvcControllerName = mvcControllerName,
 
                         OperationNameLower =
-                            ConvertToLowerStartIdentifier(OperationGenerationMode == OperationGenerationMode.MultipleClientsFromPathSegments
+                            ConvertToLowerStartIdentifier(BaseSettings.OperationGenerationMode == OperationGenerationMode.MultipleClientsFromPathSegments
                                 ? mvcActionName
                                 : operation.OperationId),
                         OperationNameUpper =
-                            ConvertToUpperStartIdentifier(OperationGenerationMode == OperationGenerationMode.MultipleClientsFromPathSegments
+                            ConvertToUpperStartIdentifier(BaseSettings.OperationGenerationMode == OperationGenerationMode.MultipleClientsFromPathSegments
                                 ? mvcActionName
                                 : operation.OperationId),
 
@@ -111,34 +118,21 @@ namespace NSwag.CodeGeneration.ClientGenerators
                         Responses = responses,
                         DefaultResponse = defaultResponse,
 
-                        Parameters = operation.Parameters.Select(p => new ParameterModel
+                        Parameters = operation.Parameters.Select(p =>
                         {
-                            Name = p.Name,
-                            Type = resolver.Resolve(p.ActualSchema, p.IsRequired, p.Name),
-                            IsLast = operation.Parameters.LastOrDefault() == p,
-                            Description = p.Description
-                        }).ToList(),
+                            if (p.ActualSchema.Type == JsonObjectType.File)
+                                p.ActualSchema.Type = JsonObjectType.String; // TODO: Implement File type handling
 
-                        ContentParameter =
-                            operation.Parameters.Where(p => p.Kind == SwaggerParameterKind.Body)
-                                .Select(p => new ParameterModel { Name = p.Name })
-                                .SingleOrDefault(),
-
-                        PlaceholderParameters =
-                            operation.Parameters.Where(p => p.Kind == SwaggerParameterKind.Path).Select(p => new ParameterModel
+                            return new ParameterModel
                             {
                                 Name = p.Name,
-                                IsDate = p.Format == JsonFormatStrings.DateTime,
-                                Description = p.Description
-                            }),
-
-                        QueryParameters =
-                            operation.Parameters.Where(p => p.Kind == SwaggerParameterKind.Query).Select(p => new ParameterModel
-                            {
-                                Name = p.Name,
-                                IsDate = p.Format == JsonFormatStrings.DateTime,
-                                Description = p.Description
-                            }).ToList(),
+                                VariableNameLower = ConvertToLowerStartIdentifier(p.Name.Replace("-", "_")), 
+                                Kind = p.Kind, 
+                                Type = resolver.Resolve(p.ActualSchema, p.IsRequired, p.Name),
+                                IsLast = operation.Parameters.LastOrDefault() == p,
+                                Description = RemoveLineBreaks(p.Description)
+                            };
+                        }).ToList(),                           
                     };
                 }).ToList();
             return operations;
@@ -146,7 +140,14 @@ namespace NSwag.CodeGeneration.ClientGenerators
 
         internal SwaggerResponse GetOkResponse(SwaggerOperation operation)
         {
-            return operation.Responses.Single(r => r.Key == "200").Value;
+            if (operation.Responses.Any(r => r.Key == "200"))
+                return operation.Responses.Single(r => r.Key == "200").Value;
+
+            var response = operation.Responses.FirstOrDefault(r => HttpUtilities.IsSuccessStatusCode(r.Key)).Value;
+            if (response == null)
+                return operation.Responses.First().Value;
+
+            return response;
         }
     }
 }

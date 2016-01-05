@@ -32,17 +32,17 @@ namespace NSwag
         [JsonProperty(PropertyName = "tags", DefaultValueHandling = DefaultValueHandling.Ignore)]
         public List<string> Tags { get; set; }
 
-        /// <summary>Gets or sets the description.</summary>
+        /// <summary>Gets or sets the summary of the operation.</summary>
+        [JsonProperty(PropertyName = "summary", DefaultValueHandling = DefaultValueHandling.Ignore)]
+        public string Summary { get; set; }
+
+        /// <summary>Gets or sets the long description of the operation.</summary>
         [JsonProperty(PropertyName = "description", DefaultValueHandling = DefaultValueHandling.Ignore)]
         public string Description { get; set; }
 
         /// <summary>Gets or sets the external documentation.</summary>
         [JsonProperty(PropertyName = "externalDocs", DefaultValueHandling = DefaultValueHandling.Ignore)]
         public SwaggerExternalDocumentation ExternalDocumentation { get; set; }
-
-        /// <summary>Gets or sets the name of the operation.</summary>
-        [JsonProperty(PropertyName = "summary", DefaultValueHandling = DefaultValueHandling.Ignore)]
-        public string Summary { get; set; }
 
         /// <summary>Gets or sets the operation ID (unique name).</summary>
         [JsonProperty(PropertyName = "operationId", DefaultValueHandling = DefaultValueHandling.Ignore)]
@@ -74,7 +74,7 @@ namespace NSwag
 
         /// <summary>Gets or sets a security description.</summary>
         [JsonProperty(PropertyName = "security", DefaultValueHandling = DefaultValueHandling.Ignore)]
-        public SwaggerSecurityRequirement Security { get; set; }
+        public List<SwaggerSecurityRequirement> Security { get; set; }
 
         /// <summary>Gets the list of MIME types the operation can consume, either from the operation or from the <see cref="SwaggerService"/>.</summary>
         [JsonIgnore]
@@ -121,7 +121,7 @@ namespace NSwag
 
         /// <summary>Gets the actual security description, either from the operation or from the <see cref="SwaggerService"/>.</summary>
         [JsonIgnore]
-        public SwaggerSecurityRequirement ActualSecurity
+        public List<SwaggerSecurityRequirement> ActualSecurity
         {
             get { return Security ?? Parent.Parent.Security; }
         }

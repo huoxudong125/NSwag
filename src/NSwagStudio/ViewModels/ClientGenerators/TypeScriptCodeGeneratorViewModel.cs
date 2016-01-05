@@ -14,49 +14,38 @@ using MyToolkit.Storage;
 using NSwag;
 using NSwag.CodeGeneration.ClientGenerators;
 using NSwag.CodeGeneration.ClientGenerators.TypeScript;
+using NSwag.Commands;
 
 namespace NSwagStudio.ViewModels.ClientGenerators
 {
     public class TypeScriptCodeGeneratorViewModel : ViewModelBase
     {
-        private string _className;
         private string _clientCode;
-        private TypeScriptAsyncType _asyncType;
-        private OperationGenerationMode _operationGenerationMode;
+        private SwaggerToTypeScriptCommand _command = new SwaggerToTypeScriptCommand();
 
-        /// <summary>Initializes a new instance of the <see cref="TypeScriptCodeGeneratorViewModel"/> class.</summary>
-        public TypeScriptCodeGeneratorViewModel()
+        public bool ShowSettings
         {
-            ClassName = ApplicationSettings.GetSetting("ClassName", "{controller}Client");
+            get { return ApplicationSettings.GetSetting("TypeScriptCodeGeneratorViewModel.ShowSettings", true); }
+            set { ApplicationSettings.SetSetting("TypeScriptCodeGeneratorViewModel.ShowSettings", value); }
         }
 
-        /// <summary>Gets or sets the TypeScript class name. </summary>
-        public string ClassName
+        /// <summary>Gets the settings.</summary>
+        public SwaggerToTypeScriptCommand Command
         {
-            get { return _className; }
-            set { Set(ref _className, value); }
+            get { return _command; }
+            set
+            {
+                if (Set(ref _command, value))
+                    RaiseAllPropertiesChanged();
+            }
         }
 
-        /// <summary>Gets or sets the async type. </summary>
-        public TypeScriptAsyncType AsyncType
+        /// <summary>Gets the output templates. </summary>
+        public TypeScriptTemplate[] Templates
         {
-            get { return _asyncType; }
-            set { Set(ref _asyncType, value); }
+            get { return Enum.GetNames(typeof(TypeScriptTemplate)).Select(t => (TypeScriptTemplate)Enum.Parse(typeof(TypeScriptTemplate), t)).ToArray(); }
         }
-
-        /// <summary>Gets the async types. </summary>
-        public TypeScriptAsyncType[] AsyncTypes
-        {
-            get { return Enum.GetNames(typeof(TypeScriptAsyncType)).Select(t => (TypeScriptAsyncType)Enum.Parse(typeof(TypeScriptAsyncType), t)).ToArray(); }
-        }
-
-        /// <summary>Gets or sets the async type. </summary>
-        public OperationGenerationMode OperationGenerationMode
-        {
-            get { return _operationGenerationMode; }
-            set { Set(ref _operationGenerationMode, value); }
-        }
-
+        
         /// <summary>Gets the async types. </summary>
         public OperationGenerationMode[] OperationGenerationModes
         {
@@ -75,18 +64,13 @@ namespace NSwagStudio.ViewModels.ClientGenerators
             return RunTaskAsync(async () =>
             {
                 var code = string.Empty;
-                await Task.Run(() =>
+                await Task.Run(async () =>
                 {
                     if (!string.IsNullOrEmpty(swaggerData))
                     {
-                        var service = SwaggerService.FromJson(swaggerData);
-
-                        var codeGenerator = new SwaggerToTypeScriptGenerator(service);
-                        codeGenerator.Class = ClassName;
-                        codeGenerator.AsyncType = AsyncType;
-                        codeGenerator.OperationGenerationMode = OperationGenerationMode;
-
-                        code = codeGenerator.GenerateFile();
+                        Command.Input = swaggerData;
+                        code = await Command.RunAsync();
+                        Command.Input = null;
                     }
                 });
 

@@ -4,11 +4,14 @@
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" 
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:swaggerGenerators="clr-namespace:NSwagStudio.ViewModels.SwaggerGenerators"
-             mc:Ignorable="d" 
+             xmlns:converters="clr-namespace:MyToolkit.Converters;assembly=MyToolkit.Extended"
+             mc:Ignorable="d"
              d:DesignHeight="300" d:DesignWidth="300">
 
     <UserControl.Resources>
         <swaggerGenerators:WebApiSwaggerGeneratorViewModel x:Key="ViewModel" />
+        <converters:VisibilityConverter x:Key="VisibilityConverter" />
+        <converters:NotConverter x:Key="NotConverter" />
     </UserControl.Resources>
 
     <StackPanel Margin="8" DataContext="{StaticResource ViewModel}">
@@ -38,14 +41,34 @@
         </Grid>
         <TextBlock Text="{Binding AssemblyName, Mode=OneWay}" TextWrapping="Wrap" Margin="0,-6,0,12" />
 
-        <TextBlock Text="Controller" FontWeight="Bold" Margin="0,0,0,6" />
-        <ComboBox Text="{Binding ControllerName, Mode=TwoWay}" Margin="0,0,0,12"
+        <TextBlock Text="Web API Controller" FontWeight="Bold" Margin="0,0,0,6" />
+        <TextBlock Visibility="{Binding SpecifyControllerName, Converter={StaticResource NotConverter}}"
+                   Margin="0,0,0,12">
+            <Run Text="Using all" />
+            <Run Text="{Binding AllControllerNames.Length, Mode=OneWay}" />
+            <Run Text="controllers" />
+        </TextBlock>
+        <TextBlock Visibility="{Binding SpecifyControllerName, Converter={StaticResource VisibilityConverter}}"
+                   Text="{Binding ControllerName}" Margin="0,0,0,12" />
+        
+        <CheckBox IsChecked="{Binding SpecifyControllerName, Mode=TwoWay}"
+                  Margin="0,0,0,6" Content="Use single controller"/>
+        <ComboBox Visibility="{Binding SpecifyControllerName, Converter={StaticResource VisibilityConverter}}"
+                  SelectedItem="{Binding ControllerName, Mode=TwoWay}" Margin="0,0,0,6"
                   ItemsSource="{Binding AllControllerNames}" />
 
-        <TextBlock Text="Default Enum Handling" FontWeight="Bold" Margin="0,0,0,6" />
-        <ComboBox SelectedItem="{Binding DefaultEnumHandling, Mode=TwoWay}" ItemsSource="{Binding EnumHandlings}" Margin="0,0,0,12" />
+        <TextBlock Margin="0,6,0,6" TextWrapping="Wrap">
+            <Run Text="Default Enum Handling" FontWeight="Bold" />
+            <LineBreak />
+            Choose 'Integer' if you use the default Json.NET serializer or 'String' if a global StringEnumConverter is registered.
+        </TextBlock>
+        <ComboBox SelectedItem="{Binding Command.DefaultEnumHandling, Mode=TwoWay}" ItemsSource="{Binding EnumHandlings}" Margin="0,0,0,12" />
+
+        <CheckBox IsChecked="{Binding Command.FlattenInheritanceHierarchy, Mode=TwoWay}" Margin="0,0,0,12">
+            <TextBlock Text="Flatten the inheritance hierarchy instead of using allOf to describe inheritance" TextWrapping="Wrap" />
+        </CheckBox>
 
         <TextBlock Text="Default URL Template" FontWeight="Bold" Margin="0,0,0,6" />
-        <TextBox Text="{Binding UrlTemplate, Mode=TwoWay}" Margin="0,0,0,24" />
+        <TextBox Text="{Binding Command.DefaultUrlTemplate, Mode=TwoWay}" Margin="0,0,0,24" />
     </StackPanel>
 </UserControl>

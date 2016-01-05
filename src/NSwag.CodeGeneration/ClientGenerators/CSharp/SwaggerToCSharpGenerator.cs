@@ -10,8 +10,8 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using NJsonSchema;
-using NJsonSchema.CodeGeneration.CSharp;
 using NSwag.CodeGeneration.ClientGenerators.Models;
+using NSwag.CodeGeneration.ClientGenerators.TypeScript;
 
 namespace NSwag.CodeGeneration.ClientGenerators.CSharp
 {
@@ -19,25 +19,29 @@ namespace NSwag.CodeGeneration.ClientGenerators.CSharp
     public class SwaggerToCSharpGenerator : ClientGeneratorBase
     {
         private readonly SwaggerService _service;
-        private readonly CSharpTypeResolver _resolver;
+        private readonly SwaggerToCSharpTypeResolver _resolver;
 
-        /// <summary>Initializes a new instance of the <see cref="SwaggerToCSharpGenerator"/> class.</summary>
+        /// <summary>Initializes a new instance of the <see cref="SwaggerToCSharpGenerator" /> class.</summary>
         /// <param name="service">The service.</param>
-        /// <exception cref="ArgumentNullException"><paramref name="service"/> is <see langword="null" />.</exception>
-        public SwaggerToCSharpGenerator(SwaggerService service)
+        /// <param name="settings">The settings.</param>
+        /// <exception cref="System.ArgumentNullException">service</exception>
+        /// <exception cref="ArgumentNullException"><paramref name="service" /> is <see langword="null" />.</exception>
+        public SwaggerToCSharpGenerator(SwaggerService service, SwaggerToCSharpGeneratorSettings settings)
         {
             if (service == null)
                 throw new ArgumentNullException("service");
 
+            Settings = settings; 
+
             _service = service;
-            _resolver = new CSharpTypeResolver(_service.Definitions.Select(p => p.Value).ToArray());
+            foreach (var definition in _service.Definitions)
+                definition.Value.TypeName = definition.Key;
+
+            _resolver = new SwaggerToCSharpTypeResolver(settings.CSharpGeneratorSettings, _service.Definitions);
         }
 
-        /// <summary>Gets or sets the class name of the service client.</summary>
-        public string Class { get; set; }
-
-        /// <summary>Gets or sets the namespace.</summary>
-        public string Namespace { get; set; }
+        /// <summary>Gets or sets the generator settings.</summary>
+        public SwaggerToCSharpGeneratorSettings Settings { get; set; }
 
         /// <summary>Gets the language.</summary>
         protected override string Language
@@ -51,42 +55,55 @@ namespace NSwag.CodeGeneration.ClientGenerators.CSharp
         {
             return GenerateFile(_service, _resolver);
         }
-        
+
+        internal override ClientGeneratorBaseSettings BaseSettings
+        {
+            get { return Settings; }
+        }
+
         internal override string RenderFile(string clientCode)
         {
             var template = LoadTemplate("File");
-            template.Add("namespace", Namespace);
+            template.Add("namespace", Settings.CSharpGeneratorSettings.Namespace);
             template.Add("toolchain", SwaggerService.ToolchainVersion);
-            template.Add("clients", clientCode);
-            template.Add("classes", _resolver.GenerateTypes());
+            template.Add("clients", Settings.GenerateClientClasses ? clientCode : string.Empty);
+            template.Add("namespaceUsages", Settings.AdditionalNamespaceUsages ?? new string[] {});
+            template.Add("classes", Settings.GenerateDtoTypes ? _resolver.GenerateTypes() : string.Empty);
             return template.Render();
         }
 
         internal override string RenderClientCode(string controllerName, IEnumerable<OperationModel> operations)
         {
             var template = LoadTemplate("Client");
-            template.Add("class", Class.Replace("{controller}", ConvertToUpperStartIdentifier(controllerName)));
+            template.Add("class", Settings.ClassName.Replace("{controller}", ConvertToUpperStartIdentifier(controllerName)));
+
+            var hasClientBaseClass = !string.IsNullOrEmpty(Settings.ClientBaseClass); 
+            template.Add("clientBaseClass", Settings.ClientBaseClass);
+            template.Add("hasClientBaseClass", hasClientBaseClass);
+
+            template.Add("useHttpClientCreationMethod", Settings.UseHttpClientCreationMethod);
+            template.Add("generateClientInterfaces", Settings.GenerateClientInterfaces);
+            template.Add("hasBaseType", Settings.GenerateClientInterfaces || hasClientBaseClass);
+
             template.Add("baseUrl", _service.BaseUrl);
             template.Add("operations", operations);
             template.Add("hasOperations", operations.Any());
+
             return template.Render();
         }
 
         internal override string GetExceptionType(SwaggerOperation operation)
         {
-            if (operation.Responses.Count(r => r.Key != "200") != 1)
+            if (operation.Responses.Count(r => !HttpUtilities.IsSuccessStatusCode(r.Key)) != 1)
                 return "Exception";
 
-            return GetType(operation.Responses.Single(r => r.Key != "200").Value.Schema, "Exception");
+            return GetType(operation.Responses.Single(r => !HttpUtilities.IsSuccessStatusCode(r.Key)).Value.Schema, "Exception");
         }
 
         internal override string GetResultType(SwaggerOperation operation)
         {
-            if (operation.Responses.Count(r => r.Key == "200") == 0)
+            if (operation.Responses.Count(r => HttpUtilities.IsSuccessStatusCode(r.Key)) == 0)
                 return "Task";
-
-            if (operation.Responses.Count(r => r.Key == "200") != 1)
-                return "Task<object>";
 
             var response = GetOkResponse(operation);
             return "Task<" + GetType(response.Schema, "Response") + ">";
@@ -97,7 +114,7 @@ namespace NSwag.CodeGeneration.ClientGenerators.CSharp
             if (schema == null)
                 return "string";
 
-            if (schema.IsAnyType)
+            if (schema.ActualSchema.IsAnyType)
                 return "object";
 
             return _resolver.Resolve(schema.ActualSchema, true, typeNameHint);

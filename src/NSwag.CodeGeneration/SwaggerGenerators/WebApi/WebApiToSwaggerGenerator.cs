@@ -7,11 +7,14 @@
 //-----------------------------------------------------------------------
 
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using System.Text.RegularExpressions;
+using System.Threading.Tasks;
 using NJsonSchema;
+using NJsonSchema.Infrastructure;
 using NSwag.CodeGeneration.Infrastructure;
 
 namespace NSwag.CodeGeneration.SwaggerGenerators.WebApi
@@ -19,81 +22,95 @@ namespace NSwag.CodeGeneration.SwaggerGenerators.WebApi
     /// <summary>Generates a <see cref="SwaggerService"/> object for the given Web API class type. </summary>
     public class WebApiToSwaggerGenerator
     {
-        private SwaggerService _service;
-        private readonly string _defaultRouteTemplate;
-        private Type _serviceType;
-
         /// <summary>Initializes a new instance of the <see cref="WebApiToSwaggerGenerator" /> class.</summary>
-        /// <param name="defaultRouteTemplate">The default route template.</param>
-        public WebApiToSwaggerGenerator(string defaultRouteTemplate) : this (defaultRouteTemplate, new JsonSchemaGeneratorSettings())
+        /// <param name="settings">The settings.</param>
+        public WebApiToSwaggerGenerator(WebApiToSwaggerGeneratorSettings settings)
         {
+            Settings = settings;
         }
 
-        /// <summary>Initializes a new instance of the <see cref="WebApiToSwaggerGenerator" /> class.</summary>
-        /// <param name="defaultRouteTemplate">The default route template.</param>
-        /// <param name="jsonSchemaGeneratorSettings">The JSON Schema generator settings.</param>
-        public WebApiToSwaggerGenerator(string defaultRouteTemplate, JsonSchemaGeneratorSettings jsonSchemaGeneratorSettings)
-        {
-            _defaultRouteTemplate = defaultRouteTemplate;
-            JsonSchemaGeneratorSettings = jsonSchemaGeneratorSettings; 
-        }
+        /// <summary>Gets or sets the generator settings.</summary>
+        public WebApiToSwaggerGeneratorSettings Settings { get; set; }
 
-        /// <summary>Gets or sets the JSON Schema generator settings.</summary>
-        public JsonSchemaGeneratorSettings JsonSchemaGeneratorSettings { get; set; }
-        
-        /// <summary>Generates the service description.</summary>
+        /// <summary>Generates a Swagger specification for the given controller type.</summary>
         /// <typeparam name="TController">The type of the controller.</typeparam>
         /// <param name="excludedMethodName">The name of the excluded method name.</param>
         /// <returns>The <see cref="SwaggerService" />.</returns>
-        /// <exception cref="InvalidOperationException">The parameter cannot be an object or array.</exception>
-        public SwaggerService Generate<TController>(string excludedMethodName = "Swagger")
+        /// <exception cref="InvalidOperationException">The operation has more than one body parameter.</exception>
+        public SwaggerService GenerateForController<TController>(string excludedMethodName = "Swagger")
         {
-            return Generate(typeof(TController), excludedMethodName);
+            return GenerateForController(typeof(TController), excludedMethodName);
         }
 
-        /// <summary>Generates the service description.</summary>
+        /// <summary>Generates a Swagger specification for the given controller type.</summary>
         /// <param name="controllerType">The type of the controller.</param>
         /// <param name="excludedMethodName">The name of the excluded method name.</param>
         /// <returns>The <see cref="SwaggerService" />.</returns>
-        /// <exception cref="InvalidOperationException">The parameter cannot be an object or array.</exception>
-        public SwaggerService Generate(Type controllerType, string excludedMethodName = "Swagger")
+        /// <exception cref="InvalidOperationException">The operation has more than one body parameter.</exception>
+        public SwaggerService GenerateForController(Type controllerType, string excludedMethodName = "Swagger")
         {
-            _service = new SwaggerService();
-            _serviceType = controllerType;
-
+            var service = new SwaggerService();
             var schemaResolver = new SchemaResolver();
+
+            GenerateForController(service, controllerType, excludedMethodName, schemaResolver);
+
+            service.GenerateOperationIds();
+            return service;
+        }
+
+        /// <summary>Generates a Swagger specification for the given controller types.</summary>
+        /// <param name="controllerTypes">The types of the controller.</param>
+        /// <param name="excludedMethodName">The name of the excluded method name.</param>
+        /// <returns>The <see cref="SwaggerService" />.</returns>
+        /// <exception cref="InvalidOperationException">The operation has more than one body parameter.</exception>
+        public SwaggerService GenerateForControllers(Type[] controllerTypes, string excludedMethodName = "Swagger")
+        {
+            var service = new SwaggerService();
+            var schemaResolver = new SchemaResolver();
+
+            foreach (var controllerType in controllerTypes)
+                GenerateForController(service, controllerType, excludedMethodName, schemaResolver);
+
+            service.GenerateOperationIds();
+            return service;
+        }
+
+        /// <exception cref="InvalidOperationException">The operation has more than one body parameter.</exception>
+        private void GenerateForController(SwaggerService service, Type controllerType, string excludedMethodName, SchemaResolver schemaResolver)
+        {
             var methods = controllerType.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly);
             foreach (var method in methods.Where(m => m.Name != excludedMethodName))
             {
                 var parameters = method.GetParameters().ToList();
                 var methodName = method.Name;
 
+                var operationId = methodName;
+                if (operationId.EndsWith("Async"))
+                    operationId = operationId.Substring(0, operationId.Length - 5);
+
                 var operation = new SwaggerOperation();
-                operation.OperationId = methodName;
+                operation.OperationId = operationId;
 
-                var httpPath = GetHttpPath(operation, method, parameters, schemaResolver);
+                var httpPath = GetHttpPath(service, operation, controllerType, method, parameters, schemaResolver);
 
-                LoadParameters(operation, parameters, schemaResolver);
-                LoadReturnType(operation, method, schemaResolver);
+                LoadParameters(service, operation, parameters, schemaResolver);
+                LoadReturnType(service, operation, method, schemaResolver);
                 LoadMetaData(operation, method);
 
                 foreach (var httpMethod in GetSupportedHttpMethods(method))
                 {
-                    if (!_service.Paths.ContainsKey(httpPath))
+                    if (!service.Paths.ContainsKey(httpPath))
                     {
                         var path = new SwaggerOperations();
-                        _service.Paths[httpPath] = path;
+                        service.Paths[httpPath] = path;
                     }
 
-                    _service.Paths[httpPath][httpMethod] = operation;
+                    service.Paths[httpPath][httpMethod] = operation;
                 }
             }
 
             foreach (var schema in schemaResolver.Schemes)
-                _service.Definitions[schema.TypeName] = schema;
-
-            _service.GenerateOperationIds();
-            return _service;
+                service.Definitions[schema.TypeName] = schema;
         }
 
         private void LoadMetaData(SwaggerOperation operation, MethodInfo method)
@@ -102,10 +119,16 @@ namespace NSwag.CodeGeneration.SwaggerGenerators.WebApi
                 .SingleOrDefault(a => a.GetType().Name == "DescriptionAttribute");
 
             if (descriptionAttribute != null)
-                operation.Description = descriptionAttribute.Description;
+                operation.Summary = descriptionAttribute.Description;
+            else
+            {
+                var summary = method.GetXmlDocumentation();
+                if (summary != string.Empty)
+                    operation.Summary = summary;
+            }
         }
 
-        private string GetHttpPath(SwaggerOperation operation, MethodInfo method, List<ParameterInfo> parameters, ISchemaResolver schemaResolver)
+        private string GetHttpPath(SwaggerService service, SwaggerOperation operation, Type controllerType, MethodInfo method, List<ParameterInfo> parameters, ISchemaResolver schemaResolver)
         {
             string httpPath;
 
@@ -114,7 +137,7 @@ namespace NSwag.CodeGeneration.SwaggerGenerators.WebApi
 
             if (routeAttribute != null)
             {
-                dynamic routePrefixAttribute = _serviceType.GetCustomAttributes()
+                dynamic routePrefixAttribute = controllerType.GetCustomAttributes()
                     .SingleOrDefault(a => a.GetType().Name == "RoutePrefixAttribute");
 
                 if (routePrefixAttribute != null)
@@ -125,8 +148,8 @@ namespace NSwag.CodeGeneration.SwaggerGenerators.WebApi
             else
             {
                 var actionName = GetActionName(method);
-                httpPath = _defaultRouteTemplate
-                    .Replace("{controller}", _serviceType.Name.Replace("Controller", string.Empty))
+                httpPath = Settings.DefaultUrlTemplate
+                    .Replace("{controller}", controllerType.Name.Replace("Controller", string.Empty))
                     .Replace("{action}", actionName);
             }
 
@@ -136,7 +159,7 @@ namespace NSwag.CodeGeneration.SwaggerGenerators.WebApi
                 var parameter = parameters.SingleOrDefault(p => p.Name == parameterName);
                 if (parameter != null)
                 {
-                    var operationParameter = CreatePrimitiveParameter(parameter, schemaResolver);
+                    var operationParameter = CreatePrimitiveParameter(service, parameter, schemaResolver);
                     operationParameter.Kind = SwaggerParameterKind.Path;
 
                     operation.Parameters.Add(operationParameter);
@@ -212,7 +235,7 @@ namespace NSwag.CodeGeneration.SwaggerGenerators.WebApi
 
             if (acceptVerbsAttribute != null)
             {
-                foreach (var verb in ((ICollection<string>)acceptVerbsAttribute.Verbs).Select(v => v.ToLowerInvariant()))
+                foreach (var verb in ((ICollection)acceptVerbsAttribute.HttpMethods).OfType<object>().Select(v => v.ToString().ToLowerInvariant()))
                 {
                     if (verb == "get")
                         yield return SwaggerOperationMethod.Get;
@@ -232,80 +255,141 @@ namespace NSwag.CodeGeneration.SwaggerGenerators.WebApi
             }
         }
 
-        /// <exception cref="InvalidOperationException">The parameter cannot be an object or array. </exception>
-        private void LoadParameters(SwaggerOperation operation, List<ParameterInfo> parameters, ISchemaResolver schemaResolver)
+        /// <exception cref="InvalidOperationException">The operation has more than one body parameter.</exception>
+        private void LoadParameters(SwaggerService service, SwaggerOperation operation, List<ParameterInfo> parameters, ISchemaResolver schemaResolver)
         {
             foreach (var parameter in parameters)
             {
+                // http://blogs.msdn.com/b/jmstall/archive/2012/04/16/how-webapi-does-parameter-binding.aspx
+
+                var info = JsonObjectTypeDescription.FromType(parameter.ParameterType);
+
                 dynamic fromBodyAttribute = parameter.GetCustomAttributes()
                     .SingleOrDefault(a => a.GetType().Name == "FromBodyAttribute");
 
-                if (fromBodyAttribute != null)
+                dynamic fromUriAttribute = parameter.GetCustomAttributes()
+                    .SingleOrDefault(a => a.GetType().Name == "FromUriAttribute");
+
+                // TODO: Add support for ModelBinder attribute
+
+                var isComplexParameter = IsComplexType(info);
+                if (isComplexParameter)
                 {
-                    var operationParameter = CreateBodyParameter(parameter, schemaResolver);
-                    operation.Parameters.Add(operationParameter);
+                    if (fromUriAttribute != null)
+                        AddPrimitiveParameter(service, operation, schemaResolver, parameter);
+                    else
+                        AddBodyParameter(service, operation, schemaResolver, parameter);
                 }
                 else
                 {
-                    var info = JsonObjectTypeDescription.FromType(parameter.ParameterType);
-                    if (info.Type.HasFlag(JsonObjectType.Object) || info.Type.HasFlag(JsonObjectType.Array))
-                    {
-                        if (operation.Parameters.Any(p => p.Kind == SwaggerParameterKind.Body))
-                            throw new InvalidOperationException("The parameter '" + parameter.Name + "' cannot be an object or array. ");
-
-                        var operationParameter = CreateBodyParameter(parameter, schemaResolver);
-                        operation.Parameters.Add(operationParameter);
-                    }
+                    if (fromBodyAttribute != null)
+                        AddBodyParameter(service, operation, schemaResolver, parameter);
                     else
-                    {
-                        var operationParameter = CreatePrimitiveParameter(parameter, schemaResolver);
-                        operationParameter.Kind = SwaggerParameterKind.Query;
-
-                        operation.Parameters.Add(operationParameter);
-                    }
+                        AddPrimitiveParameter(service, operation, schemaResolver, parameter);
                 }
             }
+
+            if (operation.Parameters.Count(p => p.Kind == SwaggerParameterKind.Body) > 1)
+                throw new InvalidOperationException("The operation '" + operation.OperationId + "' has more than one body parameter.");
         }
 
-        private SwaggerParameter CreateBodyParameter(ParameterInfo parameter, ISchemaResolver schemaResolver)
+        private void AddBodyParameter(SwaggerService service, SwaggerOperation operation, ISchemaResolver schemaResolver,
+            ParameterInfo parameter)
+        {
+            var operationParameter = CreateBodyParameter(service, parameter, schemaResolver);
+            operation.Parameters.Add(operationParameter);
+        }
+
+        private void AddPrimitiveParameter(SwaggerService service, SwaggerOperation operation, ISchemaResolver schemaResolver,
+            ParameterInfo parameter)
+        {
+            var operationParameter = CreatePrimitiveParameter(service, parameter, schemaResolver);
+            operationParameter.Kind = SwaggerParameterKind.Query;
+            operation.Parameters.Add(operationParameter);
+        }
+
+        private SwaggerParameter CreateBodyParameter(SwaggerService service, ParameterInfo parameter, ISchemaResolver schemaResolver)
         {
             var operationParameter = new SwaggerParameter();
-            operationParameter.Schema = CreateAndAddSchema<SwaggerParameter>(parameter.ParameterType, schemaResolver);
-            operationParameter.Name = "request";
+            operationParameter.Schema = CreateAndAddSchema<SwaggerParameter>(service, parameter.ParameterType, schemaResolver);
+            operationParameter.Name = parameter.Name;
             operationParameter.Kind = SwaggerParameterKind.Body;
+
+            var description = parameter.GetXmlDocumentation();
+            if (description != string.Empty)
+                operationParameter.Description = description;
+
             return operationParameter;
         }
 
-        private void LoadReturnType(SwaggerOperation operation, MethodInfo method, ISchemaResolver schemaResolver)
+        private SwaggerParameter CreatePrimitiveParameter(SwaggerService service, ParameterInfo parameter, ISchemaResolver schemaResolver)
         {
-            if (method.ReturnType.FullName != "System.Void")
+            var parameterGenerator = new RootTypeJsonSchemaGenerator(service, Settings);
+
+            var info = JsonObjectTypeDescription.FromType(parameter.ParameterType);
+            var isComplexParameter = IsComplexType(info);
+            var parameterType = isComplexParameter ? typeof(string) : parameter.ParameterType; // complex types must be treated as string
+
+            var segmentParameter = parameterGenerator.Generate<SwaggerParameter>(parameterType, schemaResolver);
+            segmentParameter.Name = parameter.Name;
+            segmentParameter.Description = parameter.GetXmlDocumentation();
+            return segmentParameter;
+        }
+
+        private void LoadReturnType(SwaggerService service, SwaggerOperation operation, MethodInfo method, ISchemaResolver schemaResolver)
+        {
+            var returnType = method.ReturnType;
+            if (returnType == typeof(Task))
+                returnType = typeof(void);
+            else if (returnType.Name == "Task`1")
+                returnType = returnType.GenericTypeArguments[0];
+
+            var description = method.ReturnParameter.GetXmlDocumentation();
+            if (description == string.Empty)
+                description = null;
+
+            var isVoidResponse = 
+                returnType.FullName == "System.Void" || 
+                returnType.Name == "IHttpActionResult" || 
+                returnType.Name == "HttpResponseMessage" || 
+                returnType.InheritsFrom("HttpResponseMessage");
+
+            var responseTypeAttributes = method.GetCustomAttributes().Where(a => a.GetType().Name == "ResponseTypeAttribute").ToList();
+            if (responseTypeAttributes.Count > 0)
             {
-                var resultTypeAttributes = method.GetCustomAttributes().Where(a => a.GetType().Name == "ResultTypeAttribute").ToList();
-                if (resultTypeAttributes.Count > 0)
+                foreach (var responseTypeAttribute in responseTypeAttributes)
                 {
-                    foreach (var resultTypeAttribute in resultTypeAttributes)
+                    dynamic dynResultTypeAttribute = responseTypeAttribute;
+
+                    var httpStatusCode = isVoidResponse ? "204" : "200";
+                    if (responseTypeAttribute.GetType().GetRuntimeProperty("HttpStatusCode") != null)
+                        httpStatusCode = dynResultTypeAttribute.HttpStatusCode;
+
+                    var schema = CreateAndAddSchema<JsonSchema4>(service, dynResultTypeAttribute.ResponseType, schemaResolver);
+                    operation.Responses[httpStatusCode] = new SwaggerResponse
                     {
-                        dynamic dynResultTypeAttribute = resultTypeAttribute;
-
-                        var httpStatusCode = "200";
-                        if (resultTypeAttribute.GetType().GetRuntimeProperty("HttpStatusCode") != null)
-                            httpStatusCode = dynResultTypeAttribute.HttpStatusCode;
-
-                        var schema = CreateAndAddSchema<JsonSchema4>(dynResultTypeAttribute.Type, schemaResolver);
-                        operation.Responses[httpStatusCode] = new SwaggerResponse { Schema = schema };
-                    }
-                }
-                else
-                {
-                    var schema = CreateAndAddSchema<JsonSchema4>(method.ReturnType, schemaResolver);
-                    operation.Responses["200"] = new SwaggerResponse { Schema = schema };
+                        Description = description,
+                        Schema = schema
+                    };
                 }
             }
             else
-                operation.Responses["200"] = new SwaggerResponse();
+            {
+                if (isVoidResponse)
+                    operation.Responses["204"] = new SwaggerResponse();
+                else
+                {
+                    var schema = CreateAndAddSchema<JsonSchema4>(service, returnType, schemaResolver);
+                    operation.Responses["200"] = new SwaggerResponse
+                    {
+                        Description = description,
+                        Schema = schema
+                    };
+                }
+            }
         }
 
-        private TSchemaType CreateAndAddSchema<TSchemaType>(Type type, ISchemaResolver schemaResolver)
+        private TSchemaType CreateAndAddSchema<TSchemaType>(SwaggerService service, Type type, ISchemaResolver schemaResolver)
             where TSchemaType : JsonSchema4, new()
         {
             if (type.Name == "Task`1")
@@ -313,8 +397,8 @@ namespace NSwag.CodeGeneration.SwaggerGenerators.WebApi
 
             if (type.Name == "JsonResult`1")
                 type = type.GenericTypeArguments[0];
-
-            if (type.Name == "HttpResponseMessage" || type.InheritsFrom("HttpResponseMessage"))
+            
+            if (type.Name == "IHttpActionResult" || type.Name == "HttpResponseMessage" || type.InheritsFrom("HttpResponseMessage"))
                 type = typeof(object);
 
             var info = JsonObjectTypeDescription.FromType(type);
@@ -329,16 +413,16 @@ namespace NSwag.CodeGeneration.SwaggerGenerators.WebApi
                     };
                 }
 
-                if (!schemaResolver.HasSchema(type))
+                if (!schemaResolver.HasSchema(type, false))
                 {
-                    var schemaGenerator = new RootTypeJsonSchemaGenerator(_service, JsonSchemaGeneratorSettings);
+                    var schemaGenerator = new RootTypeJsonSchemaGenerator(service, Settings);
                     schemaGenerator.Generate<JsonSchema4>(type, schemaResolver);
                 }
 
                 return new TSchemaType
                 {
                     Type = JsonObjectType.Object,
-                    SchemaReference = schemaResolver.GetSchema(type)
+                    SchemaReference = schemaResolver.GetSchema(type, false)
                 };
             }
 
@@ -348,28 +432,18 @@ namespace NSwag.CodeGeneration.SwaggerGenerators.WebApi
                 return new TSchemaType
                 {
                     Type = JsonObjectType.Array,
-                    Item = CreateAndAddSchema<JsonSchema4>(itemType, schemaResolver)
+                    Item = CreateAndAddSchema<JsonSchema4>(service, itemType, schemaResolver)
                 };
             }
 
-            var generator = new RootTypeJsonSchemaGenerator(_service, JsonSchemaGeneratorSettings);
+            var generator = new RootTypeJsonSchemaGenerator(service, Settings);
             return generator.Generate<TSchemaType>(type, schemaResolver);
         }
 
-        /// <exception cref="InvalidOperationException">The parameter cannot be an object or array. </exception>
-        private SwaggerParameter CreatePrimitiveParameter(ParameterInfo parameter, ISchemaResolver schemaResolver)
+        private bool IsComplexType(JsonObjectTypeDescription info)
         {
-            var parameterType = parameter.ParameterType;
-
-            var info = JsonObjectTypeDescription.FromType(parameterType);
-            if (info.Type.HasFlag(JsonObjectType.Object) || info.Type.HasFlag(JsonObjectType.Array))
-                throw new InvalidOperationException("The parameter '" + parameter.Name + "' cannot be an object or array.");
-
-            var parameterGenerator = new RootTypeJsonSchemaGenerator(_service, JsonSchemaGeneratorSettings);
-
-            var segmentParameter = parameterGenerator.Generate<SwaggerParameter>(parameter.ParameterType, schemaResolver);
-            segmentParameter.Name = parameter.Name;
-            return segmentParameter;
+            // TODO: Move to JsonObjectTypeDescription class in NJsonSchema
+            return info.Type.HasFlag(JsonObjectType.Object) || info.Type.HasFlag(JsonObjectType.Array);
         }
     }
 }

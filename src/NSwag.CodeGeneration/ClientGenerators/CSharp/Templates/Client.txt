@@ -1,5 +1,28 @@
 ﻿<if(hasOperations)>
-public partial class <class>
+<if(generateClientInterfaces)>
+public partial interface I<class>
+{
+<operations:{operation | 
+<if(operation.HasSummary)>    /// \<summary><operation.Summary>\</summary><endif>
+<operation.Parameters:{parameter | 
+<if(parameter.HasDescription)>    /// \<param name="<parameter.VariableNameLower>"><parameter.Description>\</param><endif>}>
+<if(operation.HasResultDescription)>    /// \<returns><operation.ResultDescription>\</returns><endif>
+    /// \<exception cref="<class>.SwaggerException">A server side error occurred.\</exception>
+    <operation.resultType> <operation.OperationNameUpper>Async(<operation.Parameters:{parameter | <parameter.Type> <parameter.VariableNameLower><if(!parameter.isLast)>, <endif>}>);
+
+<if(operation.HasSummary)>    /// \<summary><operation.Summary>\</summary><endif>
+<operation.Parameters:{parameter | 
+<if(parameter.HasDescription)>    /// \<param name="<parameter.VariableNameLower>"><parameter.Description>\</param><endif>}>
+    /// \<param name="cancellationToken">A cancellation token that can be used by other objects or threads to receive notice of cancellation.\</param>
+<if(operation.HasResultDescription)>    /// \<returns><operation.ResultDescription>\</returns><endif>
+    /// \<exception cref="<class>.SwaggerException">A server side error occurred.\</exception>
+    <operation.resultType> <operation.OperationNameUpper>Async(<operation.Parameters:{parameter | <parameter.Type> <parameter.VariableNameLower>, }>CancellationToken cancellationToken);
+
+}>
+}
+<endif>
+
+public partial class <class> <if(hasBaseType)>: <endif><if(hasClientBaseClass)><clientBaseClass><if(generateClientInterfaces)>, <endif><endif><if(generateClientInterfaces)>I<class><endif>
 {
     public <class>() : this("<baseUrl>") { }
 
@@ -13,49 +36,72 @@ public partial class <class>
     partial void ProcessResponse(HttpClient request, HttpResponseMessage response);
 
     public string BaseUrl { get; set; }
-        
+
 <operations:{operation | 
 <if(operation.HasSummary)>    /// \<summary><operation.Summary>\</summary><endif>
 <operation.Parameters:{parameter | 
-<if(parameter.HasDescription)>    /// \<param name="<parameter.Name>"><parameter.Description>\</param><endif>}>
+<if(parameter.HasDescription)>    /// \<param name="<parameter.VariableNameLower>"><parameter.Description>\</param><endif>}>
 <if(operation.HasResultDescription)>    /// \<returns><operation.ResultDescription>\</returns><endif>
     /// \<exception cref="SwaggerException">A server side error occurred.\</exception>
-    public async <operation.resultType> <operation.OperationNameUpper>Async(<operation.Parameters:{parameter | <parameter.Type> <parameter.Name><if(!parameter.isLast)>,<endif> }>)
+    public <operation.resultType> <operation.OperationNameUpper>Async(<operation.Parameters:{parameter | <parameter.Type> <parameter.VariableNameLower><if(!parameter.isLast)>, <endif>}>)
+    {
+        return <operation.OperationNameUpper>Async(<operation.Parameters:{parameter | <parameter.VariableNameLower>, }>CancellationToken.None);
+    \}
+
+<if(operation.HasSummary)>    /// \<summary><operation.Summary>\</summary><endif>
+<operation.Parameters:{parameter | 
+<if(parameter.HasDescription)>    /// \<param name="<parameter.VariableNameLower>"><parameter.Description>\</param><endif>}>
+    /// \<param name="cancellationToken">A cancellation token that can be used by other objects or threads to receive notice of cancellation.\</param>
+<if(operation.HasResultDescription)>    /// \<returns><operation.ResultDescription>\</returns><endif>
+    /// \<exception cref="SwaggerException">A server side error occurred.\</exception>
+    public async <operation.resultType> <operation.OperationNameUpper>Async(<operation.Parameters:{parameter | <parameter.Type> <parameter.VariableNameLower>, }>CancellationToken cancellationToken)
     {
         var url = string.Format("{0\}/{1\}?", BaseUrl, "<operation.Path>");
 
-<operation.PlaceholderParameters:{parameter | 
-        url = url.Replace("{<parameter.Name>\}", <parameter.Name>.ToString());
+<operation.PathParameters:{parameter | 
+        url = url.Replace("{<parameter.Name>\}", <parameter.VariableNameLower>.ToString());
 }>
 
 <operation.QueryParameters:{parameter | 
-        url += string.Format("<parameter.Name>={0\}&", Uri.EscapeUriString(<parameter.Name>.ToString()));
+        url += string.Format("<parameter.Name>={0\}&", Uri.EscapeUriString(<parameter.VariableNameLower>.ToString()));
 }>
-            
-        var client = new HttpClient();
+        
+        <if(useHttpClientCreationMethod)>var client = await CreateHttpClientAsync(cancellationToken).ConfigureAwait(false);<else>var client = new HttpClient();<endif>
         PrepareRequest(client);
 
-<if(operation.HasContent)>
-        var content = new StringContent(JsonConvert.SerializeObject(<operation.ContentParameter.Name>));
+<operation.HeaderParameters:{parameter | 
+        client.DefaultRequestHeaders.TryAddWithoutValidation("<parameter.Name>", <parameter.VariableNameLower>);
+}>
 
-        var response = await client.<operation.HttpMethodUpper>Async(url, content);
+<if(operation.HasContent)>
+        var content = new StringContent(JsonConvert.SerializeObject(<operation.ContentParameter.VariableNameLower>));
+        content.Headers.ContentType.MediaType = "application/json";
+
+        var response = await client.<operation.HttpMethodUpper>Async(url, content, cancellationToken).ConfigureAwait(false);
         ProcessResponse(client, response);
 <else>
     <if(operation.IsGetOrDelete)>
-        var response = await client.<operation.HttpMethodUpper>Async(url);
+        var response = await client.<operation.HttpMethodUpper>Async(url, cancellationToken).ConfigureAwait(false);
     <else>
-        var response = await client.<operation.HttpMethodUpper>Async(url, new StringContent(""));
+        var response = await client.<operation.HttpMethodUpper>Async(url, new StringContent(""), cancellationToken).ConfigureAwait(false);
     <endif>
         ProcessResponse(client, response);
 <endif>
 
-        var responseData = await response.Content.ReadAsStringAsync(); 
-        var status = response.StatusCode.ToString();
+        var responseData = await response.Content.ReadAsStringAsync().ConfigureAwait(false); 
+        var status = ((int)response.StatusCode).ToString();
 <operation.Responses:{response | 
         if (status == "<response.StatusCode>") 
         {
 <if(response.IsSuccess)>
-            return JsonConvert.DeserializeObject\<<response.Type>>(responseData);		
+            try
+            {
+                return JsonConvert.DeserializeObject\<<response.Type>>(responseData);		
+            \} 
+            catch (Exception exception) 
+            {
+                throw new SwaggerException("Could not deserialize the response body.", response.StatusCode, exception);
+            \}
 <else>
             try
             {
@@ -72,7 +118,14 @@ public partial class <class>
         {
 <if(operation.HasDefaultResponse)>
     <if(operation.DefaultResponse.IsSuccess)>
-            return JsonConvert.DeserializeObject\<<operation.DefaultResponse.Type>>(responseData);		
+            try
+            {
+                return JsonConvert.DeserializeObject\<<operation.DefaultResponse.Type>>(responseData);		
+            \} 
+            catch (Exception exception) 
+            {
+                throw new SwaggerException("Could not deserialize the response body.", response.StatusCode, exception);
+            \}
     <else>
             try
             {
@@ -87,7 +140,7 @@ public partial class <class>
 <endif>
         \}
 
-        throw new SwaggerException("The response was not expected.", response.StatusCode, null);
+        throw new SwaggerException("The HTTP status code of the response was not expected (" + (int)response.StatusCode + ").", response.StatusCode, null);
     \}
 
 }>
